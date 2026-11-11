@@ -9,16 +9,34 @@ recommended free home is a **Hugging Face Spaces "Docker" Space** (2 vCPU / 16 G
 
 | Concern | How it's handled |
 |---|---|
-| **Memory** | Tracks are decoded lazily, one at a time (`build_continuous_set` accepts loaders); the full set is **never** held in RAM — chunks are flushed to disk as they render. Idle sessions + their chunk files are reaped on a TTL. |
-| **Security** | Only `youtube.com`/`youtu.be` URLs accepted (SSRF guard); video ids whitelisted to the canonical 11-char form before use in filenames (path-traversal guard); playlist length, per-track seconds, and download size hard-capped; `gunicorn` (not the Flask dev server); per-IP rate limit on `/api/set/start`. |
-| **Cost** | Stem-free by default (no torch needed to run); demucs is opt-in. Demo audio is synthesized, so the demo needs no network and no copyrighted assets. |
-| **Research framing** | README carries the method + citations; only royalty-free audio ships. |
+| **Bounded work** | Renders run on a fixed pool (`MAX_CONCURRENT_RENDERS`, default 1: demucs is heavy) behind a bounded line (`MAX_QUEUE_LENGTH`). When both are full, `POST /api/set/start` answers **503** with `Retry-After`. Status responses carry `queue_position`. |
+| **Cancellation** | `DELETE /api/set/<sid>` (or `POST /api/set/<sid>/cancel` for `navigator.sendBeacon`). The player calls it on **Stop** and on page unload. A running render unwinds from inside its next callback, frees its slot and deletes its chunk files. Renders whose browser stops polling for `ABANDON_AFTER_SEC` are cancelled too. |
+| **Uploads** | `POST /api/upload` (multipart, field `file`, one or more files). Content is sniffed with `ffprobe` against an allow-list of audio containers (the extension is ignored), stored under random server-side names, decoded to WAV at `SAMPLE_RATE` and capped at `PER_TRACK_CAP_SEC`. Per-file cap `MAX_UPLOAD_MB`, per-request/per-set cap `MAX_PLAYLIST_TRACKS`. Unused uploads expire after `UPLOAD_TTL_SEC`. |
+| **Memory** | Tracks are decoded lazily, one at a time; the full set is **never** held in RAM — chunks are flushed to disk as they render. Idle sessions and their chunk files are reaped on a TTL. |
+| **Disk** | `CACHE_DIR` is capped at `MAX_CACHE_GB`; downloaded tracks are evicted oldest-first (never one a render is using). Stale chunks, uploads and partial downloads are deleted at startup. Uploads answer **507** if the cache is still full. |
+| **Robustness** | `MAX_CONTENT_LENGTH`; strict JSON validation with specific 400 messages; every subprocess has a timeout; a track that fails to download/decode or is shorter than `MIN_TRACK_SEC` is **skipped** and listed in the status `skipped: [{source, reason}]`; a set with no usable tracks fails with a clear message. |
+| **Security** | Only `youtube.com`/`youtu.be` URLs (SSRF guard); video ids whitelisted to the canonical 11-char form (path-traversal guard); ffmpeg/ffprobe restricted to the `file` protocol; error text sent to clients never contains exception strings or paths; nonce-based CSP (no `unsafe-inline`), `frame-ancestors`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy` on every response; per-IP rate limits on start and upload. |
+| **Observability** | `logging` with the session id (`rid=`) on every line (`LOG_JSON=true` for JSON lines), `X-Request-ID` response header, render timing (`queue_wait_sec`, `first_chunk_sec`, `wall_sec`, `realtime_x`) per set; `/healthz` (liveness) and `/readyz` (ffmpeg/ffprobe present, cache writable, queue not saturated — 503 otherwise). |
+| **Cost** | Demucs is optional (slim image without torch). Demo audio is synthesized, so the demo needs no network and no copyrighted assets. |
+
+### Why exactly one gunicorn worker
+
+Sessions, the render queue, the upload registry and the chunk index are **in-process
+memory**. A second worker would have its own copies: a status or chunk request routed
+to it would 404, and the render limit would silently double. `gunicorn.conf.py` therefore
+hard-codes `workers = 1` with a `gthread` pool (`GUNICORN_THREADS`) for the cheap
+status/chunk/upload requests; renders run on the separate render pool. Scale a single
+box with `MAX_CONCURRENT_RENDERS` (on a GPU) and threads; scale out with more containers
+behind a **sticky** load balancer. `max_requests = 0` keeps the worker from being recycled
+(which would drop every session). On `SIGTERM` gunicorn stops accepting, waits up to
+`GUNICORN_GRACEFUL_TIMEOUT` for in-flight requests, then cancels all renders and deletes
+their chunks.
 
 ## Option A — Hugging Face Spaces, free CPU (recommended)
 
 Runs the whole app — **including demucs on CPU** — on the free tier (2 vCPU / 16 GB).
-demucs is slow on CPU (~10–30 s per transition) and off by default, so the demo stays
-snappy; turning on **HQ transitions** still works, just slowly.
+demucs is slow on CPU (~10–30 s per transition); it is on by default when installed —
+untick **stems** in the player (or send `use_stems: false`) for fast EQ-only transitions.
 
 > ⚠️ **Do not push the bundled audio to a public Space.** `mixes/` (~1.3 GB) and
 > `data/old_mixes/` (~445 MB) are tracked `.wav`s of copyrighted / copyright-derived
@@ -43,9 +61,15 @@ snappy; turning on **HQ transitions** still works, just slowly.
    git checkout fix/debug-instrumentation-and-bugs   # back to your working branch
    ```
    (`data/demo` is dropped too — the demo loops are regenerated at build by the
-   Dockerfile's `python -m src.demo_samples` step, so the Space recreates them itself.)
-4. First build takes a few minutes (CPU torch + demucs). When it's up, open the Space —
-   **Sample** works immediately, no network or keys needed.
+   Dockerfile's `python src/demo_samples.py` step, so the Space recreates them itself.)
+4. First build takes a few minutes (CPU torch + demucs; the htdemucs weights are
+   downloaded into the image at build time so the first stems request isn't slow).
+   When it's up, open the Space — **Sample** and **uploads** work immediately, no
+   network or keys needed.
+5. In **Settings → Variables**, set `TRUST_PROXY_HOPS=1` (Spaces sits behind a proxy;
+   without it every visitor shares one rate-limit bucket) and
+   `FRAME_ANCESTORS=https://huggingface.co` (the Space page embeds the app in an iframe;
+   the default `none` only allows opening the `*.hf.space` URL directly).
 
 ### Make YouTube work on a datacenter IP (optional)
 
@@ -79,26 +103,63 @@ docker run -p 7860:7860 \
 
 ## Configuration (env vars)
 
+All are optional; see `.env.example`.
+
 | Var | Default | Meaning |
 |---|---|---|
 | `PORT` | `7860` | Listen port (HF Spaces expects 7860). |
-| `ALLOW_YOUTUBE` | `true` | Set `false` to disable YouTube ingestion (samples only). |
-| `MAX_PLAYLIST_TRACKS` | `12` | Cap tracks per set. |
-| `PER_TRACK_CAP_SEC` | `150` | Seconds fetched per track. |
+| `SAMPLE_RATE` | `44100` | Render rate; uploads/downloads are decoded to it. |
+| `CACHE_DIR` | `data/cache/stream` | Chunks, downloaded tracks and uploads. |
+| `ALLOW_YOUTUBE` | `true` | `false` disables YouTube ingestion (and the URL field). |
+| `ALLOW_UPLOADS` | `true` | `false` disables `/api/upload` (and the drop zone). |
+| `MAX_PLAYLIST_TRACKS` | `12` | Tracks per set; also files per upload request. |
+| `PER_TRACK_CAP_SEC` | `300` (image: `150`) | Seconds kept per track (download and upload). |
+| `MIN_TRACK_SEC` | `30` | Shorter tracks are skipped. |
 | `MAX_DOWNLOAD_MB` | `60` | yt-dlp `--max-filesize`. |
-| `SESSION_TTL_SEC` | `1800` | Evict idle sessions after this long. |
-| `MAX_SESSIONS` | `24` | Concurrent session cap. |
+| `MAX_UPLOAD_MB` | `60` | Per uploaded file. `MAX_CONTENT_LENGTH` = this × `MAX_PLAYLIST_TRACKS` + 1 MB. |
+| `UPLOAD_TTL_SEC` | `3600` | Delete uploads not used for this long. |
+| `MAX_CONCURRENT_RENDERS` | `1` | Renders at once. Keep 1 on CPU; raise on a GPU. |
+| `MAX_QUEUE_LENGTH` | `4` | Waiting renders; beyond this `/api/set/start` returns 503. |
+| `ABANDON_AFTER_SEC` | `120` | Cancel a queued/running render nobody has polled for this long. |
+| `SESSION_TTL_SEC` | `1800` | Evict finished/idle sessions (and chunks) after this long. |
+| `MAX_SESSIONS` | `24` | Session cap (oldest evicted). |
+| `MAX_CACHE_GB` | `5` | `CACHE_DIR` cap; oldest downloaded tracks evicted first. |
+| `DOWNLOAD_TIMEOUT_SEC` | `120` | yt-dlp timeout (playlist resolve and each download). |
+| `FFMPEG_TIMEOUT_SEC` | `120` | Timeout for every ffmpeg/ffprobe call. |
 | `RATE_LIMIT` | `30 per hour` | Per-IP limit on `/api/set/start`. |
+| `UPLOAD_RATE_LIMIT` | `120 per hour` | Per-IP limit on `/api/upload`. |
+| `TRUST_PROXY_HOPS` | `0` | Proxies in front (HF Spaces/Fly/nginx: `1`) so limits see client IPs. |
+| `FRAME_ANCESTORS` | `'none'` | CSP `frame-ancestors`; `https://huggingface.co` for the Spaces embed. |
+| `LOG_LEVEL` | `INFO` | App and gunicorn log level. |
+| `LOG_JSON` | `false` | JSON log lines (`ts`, `level`, `logger`, `rid`, `msg`). |
 | `YT_COOKIES` | — | (secret) cookies.txt contents for yt-dlp. |
-| `GUNICORN_THREADS` | `8` | Worker threads (single worker process). |
+| `YT_COOKIES_FILE` | — | Path to a cookies.txt (set automatically from `YT_COOKIES`). |
+| `GUNICORN_THREADS` | `8` | Request threads in the single worker. |
+| `GUNICORN_TIMEOUT` | `180` | Per-request timeout (uploads; renders are not requests). |
+| `GUNICORN_GRACEFUL_TIMEOUT` | `30` | Drain time on SIGTERM. |
+| `TORCH_HOME` | `/opt/torch` (image) | Where the baked-in htdemucs weights live. |
 
-> **Single worker only.** Session state and the chunk cache live in process memory, so
-> the server must run **one** gunicorn worker (`--workers 1`, already set in the
-> entrypoint). Scale with threads, not workers.
+> **Single worker only** — see *Why exactly one gunicorn worker* above. The worker
+> count is fixed in `gunicorn.conf.py`, not configurable.
+
+## Operations
+
+- **Health:** the image has a Docker `HEALTHCHECK` on `/healthz` (liveness). Point
+  readiness probes at `/readyz`: it returns 503 with `checks` when ffmpeg/ffprobe is
+  missing, the cache is not writable, or the render queue is full.
+- **Logs:** one line per event, tagged with `rid=<session id>`; the gunicorn access log
+  carries the same id. Per set you get `set queued`, `render start` (with
+  `queue_wait_sec`), `first chunk after Ns`, `render done … wall_sec realtime_x`, or
+  `render cancelled` / `render error`. Startup logs missing binaries and how many stale
+  cache files it deleted.
+- **API errors** are JSON `{"error": "..."}` with a human-readable message: 400
+  (validation), 403 (source disabled), 404 (unknown/expired set), 413 (upload too
+  large), 415 (not audio), 429 (rate limit), 503 (queue full), 507 (cache full).
+- **Tests:** `pip install -r requirements-dev.txt && python -m pytest tests/test_server.py -q`.
 
 ## Running on a GPU (web)
 
-A GPU only accelerates **demucs** (the "HQ transitions" toggle). The rest of the mix
+A GPU only accelerates **demucs** (the **stems** toggle). The rest of the mix
 is CPU DSP. demucs auto-selects CUDA when a GPU is visible — no code change, just a
 CUDA torch build (`--build-arg TORCH_VARIANT=cu121`). Pick one of three paths:
 

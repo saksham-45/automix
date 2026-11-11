@@ -1,0 +1,9 @@
+{
+  "name": "automix-video",
+  "private": true,
+  "type": "module",
+  "description": "Offline, frame-accurate renderer: automix audio + visualizzer visuals -> 1080p60 MP4",
+  "dependencies": {
+    "playwright-core": "^1.48.2"
+  }
+}

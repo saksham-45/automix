@@ -165,14 +165,18 @@ class TechniqueExecutor:
         fade_out_samples = int(fade_out_ms * self.sr / 1000)
         fade_in_samples = int(fade_in_ms * self.sr / 1000)
         
-        # Create quick fade curves
-        fade_out = np.ones(n_samples)
-        if fade_out_samples > 0:
-            fade_out[-fade_out_samples:] = np.linspace(1.0, 0.0, fade_out_samples)
-        
+        # Cut on the beat at `cut_ratio` of the segment (default: the middle, where the
+        # engine puts the phrase downbeat): A up to the cut, B from the cut.
+        # (Previously fade_in stayed at 0 after its first 100 ms, so B never came in.)
+        cut = int(np.clip(params.get('cut_ratio', 0.5), 0.0, 1.0) * n_samples)
+        fo = max(1, min(fade_out_samples, cut))
+        fi = max(1, min(fade_in_samples, n_samples - cut))
+        fade_out = np.zeros(n_samples)
+        fade_out[:cut] = 1.0
+        fade_out[cut - fo:cut] = np.linspace(1.0, 0.0, fo)
         fade_in = np.zeros(n_samples)
-        if fade_in_samples > 0:
-            fade_in[:fade_in_samples] = np.linspace(0.0, 1.0, fade_in_samples)
+        fade_in[cut:] = 1.0
+        fade_in[cut:cut + fi] = np.linspace(0.0, 1.0, fi)
         
         # Ensure stereo
         if seg_a.ndim == 1:
@@ -894,15 +898,25 @@ class TechniqueExecutor:
         overlay_start_ratio = params.get('overlay_start_ratio', 0.3)
         vocal_fade_out_ratio = params.get('vocal_fade_out_ratio', 0.7)
         
+        # A plays in full until the overlay starts; then A's instrumental hands over to
+        # B's while A's vocal keeps riding on top (the acapella), leaving only at the end.
+        # (Previously A's vocal was held at 0 and A's instrumental was never mixed in,
+        # so the first 30% of the transition was silence.)
+        handoff_end = min(vocal_fade_out_ratio, overlay_start_ratio + 0.25)
         vocal_a_fade = crossfade_engine.create_multi_stage_curve(n_samples, [
-            {'start': 0.0, 'end': overlay_start_ratio, 'fade_type': 'hold', 'value': 0.0},
-            {'start': overlay_start_ratio, 'end': vocal_fade_out_ratio, 'fade_type': 'smooth', 'end_value': 1.0},
+            {'start': 0.0, 'end': vocal_fade_out_ratio, 'fade_type': 'hold', 'value': 1.0},
             {'start': vocal_fade_out_ratio, 'end': 1.0, 'fade_type': 'smooth', 'end_value': 0.0}
+        ])
+        inst_a_fade = crossfade_engine.create_multi_stage_curve(n_samples, [
+            {'start': 0.0, 'end': overlay_start_ratio, 'fade_type': 'hold', 'value': 1.0},
+            {'start': overlay_start_ratio, 'end': handoff_end, 'fade_type': 'smooth', 'end_value': 0.0},
+            {'start': handoff_end, 'end': 1.0, 'fade_type': 'hold', 'value': 0.0}
         ])
         
         beat_b_fade = crossfade_engine.create_multi_stage_curve(n_samples, [
             {'start': 0.0, 'end': overlay_start_ratio, 'fade_type': 'hold', 'value': 0.0},
-            {'start': overlay_start_ratio, 'end': 1.0, 'fade_type': 'smooth', 'end_value': 1.0}
+            {'start': overlay_start_ratio, 'end': handoff_end, 'fade_type': 'smooth', 'end_value': 1.0},
+            {'start': handoff_end, 'end': 1.0, 'fade_type': 'hold', 'value': 1.0}
         ])
         
         vocal_b_fade = crossfade_engine.create_multi_stage_curve(n_samples, [
@@ -923,6 +937,9 @@ class TechniqueExecutor:
         
         if 'vocals' in seg_a_stems:
             mixed += apply_fade(seg_a_stems['vocals'], vocal_a_fade)
+        for _k in ('drums', 'bass', 'other'):
+            if _k in seg_a_stems:
+                mixed += apply_fade(seg_a_stems[_k], inst_a_fade)
         if 'drums' in seg_b_stems:
             mixed += apply_fade(seg_b_stems['drums'], beat_b_fade)
         if 'bass' in seg_b_stems:
@@ -1055,8 +1072,10 @@ class TechniqueExecutor:
         
         t = np.linspace(0, 1, n_samples)
         if build_curve == 'exponential':
-            vol_a = np.exp(-3 * t)
-            vol_b = 1 - np.exp(-3 * (1 - t))
+            # B builds exponentially to full; A gives way with equal power.
+            # (Previously vol_b = 1 - exp(-3(1-t)) ran backwards and ended at 0.)
+            vol_b = (np.exp(3 * t) - 1.0) / (np.exp(3.0) - 1.0)
+            vol_a = np.sqrt(np.clip(1.0 - vol_b ** 2, 0.0, 1.0))
         elif build_curve == 'linear':
             vol_a = 1 - t
             vol_b = t
@@ -1082,10 +1101,11 @@ class TechniqueExecutor:
         from src.crossfade_engine import CrossfadeEngine
         crossfade_engine = CrossfadeEngine(sr=self.sr)
         n_samples = min(len(seg_a), len(seg_b))
-        loop_length_bars = params.get('loop_length_bars', 4)
+        loop_length_bars = params.get('loop_length_bars', 1)
         loop_repeats = params.get('loop_repeats', 4)
-        # Assume ~120 BPM: 4 beats/bar, so 1 bar = 2 sec
-        bar_sec = 4.0 * (60.0 / 120.0)  # 2 sec per bar
+        # Bar length from the real tempo (was hard-coded to 120 BPM)
+        _tempo = float(params.get('tempo') or params.get('tempo_a') or 120.0)
+        bar_sec = 4.0 * (60.0 / max(_tempo, 40.0))
         loop_sec = loop_length_bars * bar_sec
         loop_samples = min(int(loop_sec * self.sr), len(seg_a) // 2)
         loop_samples = max(loop_samples, int(0.5 * self.sr))  # at least 0.5 sec
@@ -1095,7 +1115,13 @@ class TechniqueExecutor:
             seg_a = np.column_stack([seg_a, seg_a])
         if seg_b.ndim == 1:
             seg_b = np.column_stack([seg_b, seg_b])
-        loop_slice = seg_a[-loop_samples:].copy()
+        # Loop what is playing NOW (the first bar of the segment). It used to loop the
+        # END of the segment, i.e. it jumped ahead in the song before looping.
+        loop_slice = seg_a[:loop_samples].copy()
+        _f = max(1, min(len(loop_slice) // 8, int(0.004 * self.sr)))
+        loop_slice[:_f] *= np.linspace(0.0, 1.0, _f)[:, np.newaxis]
+        loop_slice[-_f:] *= np.linspace(1.0, 0.0, _f)[:, np.newaxis]
+        loop_slice[:_f] += seg_a[:_f] * np.linspace(1.0, 0.0, _f)[:, np.newaxis]   # first pass starts untouched
         n_repeats = max(1, loop_portion // len(loop_slice) + 1)
         repeated = np.tile(loop_slice, (n_repeats, 1))[:loop_portion]
         if len(repeated) < loop_portion:
@@ -1159,12 +1185,16 @@ class TechniqueExecutor:
         n_samples = min(len(seg_a), len(seg_b))
         fade_ms = params.get('fade_ms', 50)
         fade_samples = min(int(fade_ms * self.sr / 1000), n_samples // 4)
-        fade_out = np.ones(n_samples)
-        if fade_samples > 0:
-            fade_out[-fade_samples:] = np.linspace(1.0, 0.0, fade_samples)
+        # Drop B on the downbeat at `cut_ratio` (default: the middle of the segment).
+        # (Previously B's fade_in stayed at 0 after the first 50 ms, so B never dropped.)
+        cut = int(np.clip(params.get('cut_ratio', 0.5), 0.0, 1.0) * n_samples)
+        fs = max(1, min(fade_samples, cut, n_samples - cut))
+        fade_out = np.zeros(n_samples)
+        fade_out[:cut] = 1.0
+        fade_out[cut - fs:cut] = np.linspace(1.0, 0.0, fs)
         fade_in = np.zeros(n_samples)
-        if fade_samples > 0:
-            fade_in[:fade_samples] = np.linspace(0.0, 1.0, fade_samples)
+        fade_in[cut:] = 1.0
+        fade_in[max(0, cut - fs):cut] = np.linspace(0.0, 1.0, cut - max(0, cut - fs))
         if seg_a.ndim == 1:
             seg_a = np.column_stack([seg_a, seg_a])
         if seg_b.ndim == 1:
@@ -1188,7 +1218,10 @@ class TechniqueExecutor:
         num_switches = int(round(float(params.get('num_switches', 2))))
         switch_interval_bars = max(1.0, switch_interval_bars)
         num_switches = max(0, num_switches)
-        bar_sec = 4.0 * (60.0 / 120.0)
+        _tempo = float(params.get('tempo') or params.get('tempo_a') or 120.0)
+        bar_sec = 4.0 * (60.0 / max(_tempo, 40.0))       # real tempo (was hard-coded 120 BPM)
+        if num_switches % 2 == 0:
+            num_switches += 1                            # A B A B ... must END on B
         switch_samples = int(switch_interval_bars * bar_sec * self.sr)
         switch_samples = min(switch_samples, n_samples // (num_switches + 1))
         if switch_samples < 1:
@@ -1206,14 +1239,20 @@ class TechniqueExecutor:
             chunk = end - pos
             if chunk <= 0:
                 break
-            if use_a:
-                mixed[pos:end] = seg_a[pos:end]
-            else:
-                mixed[pos:end] = seg_b[pos:end]
+            src_now, src_prev = (seg_a, seg_b) if use_a else (seg_b, seg_a)
+            mixed[pos:end] = src_now[pos:end]
+            k = min(cf_samples, chunk)
+            if pos > 0 and k > 1:                          # short crossfade at each switch (no click)
+                r = np.linspace(0.0, 1.0, k)[:, np.newaxis]
+                mixed[pos:pos + k] = src_prev[pos:pos + k] * (1 - r) + src_now[pos:pos + k] * r
             pos = end
             use_a = not use_a
         if pos < n_samples:
             mixed[pos:] = seg_b[pos:n_samples]
+            k = min(cf_samples, n_samples - pos)
+            if use_a is False and k > 1:                   # last chunk was A -> fade into B
+                r = np.linspace(0.0, 1.0, k)[:, np.newaxis]
+                mixed[pos:pos + k] = seg_a[pos:pos + k] * (1 - r) + seg_b[pos:pos + k] * r
         return mixed
 
     def _execute_drum_roll(self,
@@ -1226,7 +1265,9 @@ class TechniqueExecutor:
         n_samples = min(len(seg_a), len(seg_b))
         roll_ratio = params.get('roll_duration_ratio', 0.5)
         roll_samples = int(n_samples * roll_ratio)
-        slice_sec = 0.5
+        # One beat at the real tempo (was a fixed 0.5 s regardless of BPM)
+        _tempo = float(params.get('tempo') or params.get('tempo_a') or 120.0)
+        slice_sec = float(params.get('roll_slice_beats', 1.0)) * 60.0 / max(_tempo, 40.0)
         slice_samples = min(int(slice_sec * self.sr), len(seg_a) // 4)
         slice_samples = max(slice_samples, int(0.1 * self.sr))
         if seg_a.ndim == 1:
@@ -1234,7 +1275,10 @@ class TechniqueExecutor:
         if seg_b.ndim == 1:
             seg_b = np.column_stack([seg_b, seg_b])
         seg_a_roll = np.zeros((n_samples, seg_a.shape[1]), dtype=seg_a.dtype)
-        loop_slice = seg_a[-slice_samples:].copy()
+        # Roll the beat that is playing NOW (was: a slice from the end of the segment)
+        loop_slice = seg_a[:slice_samples].copy()
+        _f = max(1, min(len(loop_slice) // 8, int(0.004 * self.sr)))
+        loop_slice[-_f:] *= np.linspace(1.0, 0.0, _f)[:, np.newaxis]
         n_repeats = max(2, roll_samples // len(loop_slice) + 1)
         repeated = np.tile(loop_slice, (n_repeats, 1))[:roll_samples]
         if len(repeated) < roll_samples:
@@ -1252,7 +1296,7 @@ class TechniqueExecutor:
             for ch in range(seg_a_roll.shape[1]):
                 chunk = seg_a_roll[i:end_idx, ch]
                 seg_a_roll[i:end_idx, ch] = signal.filtfilt(b, a, chunk)
-        vol_ramp = np.linspace(0.7, 1.0, roll_samples)
+        vol_ramp = np.linspace(1.0, 1.1, roll_samples)   # was 0.7 -> 1.0: an audible drop when the roll began
         if vol_ramp.ndim == 1:
             vol_ramp = vol_ramp[:, np.newaxis]
         seg_a_roll[:roll_samples] *= vol_ramp

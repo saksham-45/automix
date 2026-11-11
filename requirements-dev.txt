@@ -1,0 +1,4 @@
+# Test-only deps (on top of requirements.txt):
+#   ./.venv/bin/python -m pytest tests/test_server.py -q
+-r requirements.txt
+pytest>=8

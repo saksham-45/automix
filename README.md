@@ -18,37 +18,129 @@ each consecutive pair is tempo-matched, phrase-locked, loudness-matched and
 bass-swapped on a downbeat — the moves a human DJ makes, derived from the MIR
 literature rather than hand-tuned rules.
 
-> **Scope & framing.** This is an academic/educational prototype for studying
-> automatic mixing and music-information-retrieval (MIR) techniques. The public demo
-> ships **only royalty-free, synthesized audio**; no copyrighted material is
-> distributed. Optional YouTube ingestion is provided for local experimentation and
-> is the user's responsibility under YouTube's Terms of Service and applicable
-> copyright law.
+## Showcase: automix × visualizzer
 
-### Method (grounded in the literature)
+Mixes rendered end to end by automix. The visuals come from
+[visualizzer](https://github.com/saksham-45/visualizzer), my real-time WebGL/Three.js
+audio visualizer, reacting to the mix frame by frame. The on-screen HUD shows each
+decision automix made: the move, its length in bars, both decks' BPM and key, and a
+live crossfader.
 
-- **Transition model** — a three-timestamp long blend (B audible → switch → A out)
-  with a four-state crossfade, after Vande Veire & De Bie (2018).
-- **Beat / downbeat / phrase grid** — onset-strength downbeat-phase estimation on an
-  8-bar grid; structural segmentation via a beat-synchronous self-similarity matrix
-  with Foote (2000) checkerboard novelty (Müller, *FMP*).
-- **Tempo lock** — time-stretch B to A's tempo, downbeat-aligned (cf. Zehren et al., 2022).
-- **Spectral handoff** — equal-power crossfade for mids/highs + a beat-locked 3-band
-  EQ **bass swap** that keeps low-end energy constant; optional **demucs** stem
-  separation for surgically clean drum/bass/vocal handoffs.
-- **Loudness** — K-weighted (LUFS) matching, output limited to −1 dBTP.
+<p align="center">
+  <img src="docs/media/preview_chrome_morph.gif" width="49%" alt="Chrome Morph during a vocal-overlay handoff">
+  <img src="docs/media/preview_liquid_metal.gif" width="49%" alt="Liquid Metal during an acapella overlay">
+</p>
+
+**▶ Full videos and mixes are on the [Showcase release](https://github.com/saksham-45/automix-_./releases/tag/showcase-2026-11).**
+
+| | what | length |
+|---|---|---|
+| 🎬 | **Psychedelic rap — automix × visualizzer** (1080p60). I Wonder → Champion → Stronger → Passionfruit → The Less I Know The Better → Let It Happen | 4:07 |
+| 🎬 | **House / EDM — automix × visualizzer** (1080p60, NCS tracks) | 2:55 |
+| 🎧 | Psychedelic rap quick mix: the full render behind the video | 11:22 |
+| 🎧 | House set: 8 NCS tracks, full songs | 18:58 |
+| 🎧 | YouTube-playlist set | 21:06 |
+
+The rap video runs in **quick-mix mode**. Every song plays continuously for a few
+bars after it comes in, and then a **full 16-bar transition** takes it out. Nothing
+inside a song is cut; the transitions do all the joining. Every transition is a
+different move from the stem library:
+
+| | transition | move |
+|---|---|---|
+| 0:10 | I Wonder → Champion | vocal overlay handoff: B's vocal over A's music, then B in full |
+| 1:08 | Champion → Stronger | bass from A, beat from B |
+| 1:53 | Stronger → Passionfruit | counter-melody: A's melody and vocal over B's rhythm section |
+| 2:38 | Passionfruit → The Less I Know The Better | layered reveal: B comes in stem by stem |
+| 3:19 | The Less I Know The Better → Let It Happen | acapella overlay: A's acapella over B's instrumental |
+
+The video pipeline lives in [`video/`](video/README.md). It renders offline and
+frame-accurately in headless Chrome, on a virtual clock with injected
+AnalyserNode-equivalent audio data, at 1080p60 and 2× pixel density. Because it
+doesn't render in real time, a slow GPU can't drop frames.
+
+> **Scope & framing.** This is a personal research project on automatic mixing and
+> music-information-retrieval (MIR). The web demo ships **only royalty-free,
+> synthesized audio**. The house showcase uses NoCopyrightSounds releases (credits in
+> the release notes). The rap showcase mixes commercial tracks for personal,
+> non-commercial demonstration only; all rights belong to the artists and labels.
+> YouTube ingestion is for local experimentation and is the user's responsibility
+> under YouTube's Terms of Service and applicable copyright law.
+
+### How it mixes (what a DJ does, in the order they do it)
+
+**Listen** — every track is analysed once:
+
+- **Beat grid accurate to a few ms.** The beat tracker only gives a rough tempo; the
+  period is then sharpened by comb-folding a 3 ms spectral-flux onset envelope, the
+  phase is taken from the kick (so the grid never locks to the off-beat hat), and slow
+  drift is corrected per 32 beats. A 0.1 % tempo error is a 30 ms flam after 16 bars —
+  this is the difference between a locked blend and a trainwreck.
+- **Downbeats, 8-bar phrases and section boundaries** (intro end, breakdowns, outro
+  start) from chord changes, low-band accents and bar-level spectral novelty.
+- **Key** (Krumhansl profiles → Camelot wheel), **loudness** (BS.1770, K-weighted) and a
+  **beat-confidence** score that says whether there is a steady beat to mix on at all.
+
+**Decide** — where to leave A (a phrase line, ideally where its outro starts), where
+to cue B (so the first point where B has real weight lands on the switch), and which
+family of move fits the pair:
+
+| family | when | what plays |
+|--------|------|------------|
+| **beat-matched** | tempos within ~18 % (incl. half/double time) | with demucs stems: the project's stem conversations and stem techniques, chosen from what is actually playing (who is singing, who has drums). Without stems: the full-mix techniques. |
+| **cut** | tempos too far apart to match | backspin, drop on the one, drum roll, washout, loop roll + drop, spinback, tape stop, echo out — a hard drop only if B comes in with weight |
+| **fade** | no steady beat (ambient, classical) | plain equal-power crossfade, nothing stretched |
+
+The technique library (`src/technique_executor.py`, `src/stem_orchestrator.py`, run in
+the live engine through `src/technique_bridge.py`; a few bar-timed extras in
+`src/dj_techniques.py`):
+
+- **Stem conversations** — layered reveal, counter-melody, vocal overlay handoff, bass
+  from A + beat from B, melody A + drums & vocal B, call & response, interweave,
+  progressive morph.
+- **Stem techniques** — staggered stem mix, partial stem separation, vocal layering,
+  acapella overlay, progressive stem morph, stem blend / swap, beat swap, vocal ride,
+  vocal tease, drum trade.
+- **Full-mix techniques** — long blend, bass swap, filter sweep, echo out, drop mix,
+  double drop, energy build, loop transition, breakdown to build, back and forth, drum
+  roll, washout, backspin, quick cut, drop on the one, EQ blend / filter / swap,
+  build + drop, transform cuts.
+
+The same move is never played twice in a row, and a rendered transition that leaves
+seconds of dead air on the material at hand is re-done with another technique.
+
+**Perform**
+
+- **One master tempo for both decks.** Both tracks are warped (key-locked WSOLA) onto a
+  single beat grid whose tempo glides from A's BPM to B's across the overlap — each
+  track is at its own speed whenever it is heard alone, and track bodies are always the
+  original, un-stretched audio. The grid is re-fitted locally around each transition.
+- **Whole-track loudness normalisation** (−14 LUFS) so there is no level jump when a
+  transition ends; overlaps pass through a look-ahead limiter.
+
+References: Vande Veire & De Bie (2018); Zehren et al. (2022); Foote (2000) / Müller
+*FMP*; Verhelst & Roelands (1993, WSOLA); Krumhansl (1990); ITU-R BS.1770.
 
 ### Live demo
 
 The web app streams the mix **as it renders** (progressive Web-Audio playback, no
-upfront wait). Click **Try sample** to mix three synthesized loops at 124/126/128 BPM
-and hear the tempo-matched, gapless transitions. See **[DEPLOY.md](DEPLOY.md)** for a
-one-file deploy to a free Hugging Face Spaces (Docker) Space.
+upfront wait) and shows each decision live (technique · bars · BPM · key). Click
+**Sample** to mix three synthesized tracks — each with an intro, build, drop, breakdown
+and outro, at 122/124/128 BPM. Tick **quick mix** to hear each song for only 4–8 bars
+between full-length transitions (`play_bars=(4, 8)` in `build_continuous_set`).
+Jobs are queued and cancellable, and uploads, health checks and a gunicorn config
+are included. See **[DEPLOY.md](DEPLOY.md)** for a one-file deploy to a free
+Hugging Face Spaces (Docker) Space.
 
 ```bash
 # Run locally (CPU). Stems optional; the sample needs no network.
 pip install -r requirements.txt
 PORT=5005 python club_server.py     # then open http://localhost:5005
+```
+
+```bash
+# Tests (synthetic audio with known tempo/structure — no downloads)
+python tests/test_club_mixer.py
 ```
 
 ---

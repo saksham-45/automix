@@ -14,7 +14,7 @@ import numpy as np
 import librosa
 from typing import Dict, Tuple, Optional
 from scipy import signal
-from scipy.ndimage import gaussian_filter1d
+from src.curve_smooth import gaussian_filter1d  # same curves, ~100x faster
 
 
 class StemOrchestrator:
@@ -1027,7 +1027,8 @@ class StemOrchestrator:
                         apply_effects: bool = True,
                         effect_params: Optional[Dict] = None,
                         role_plan: Optional[Dict] = None,
-                        mix_at_level: bool = True) -> np.ndarray:
+                        mix_at_level: bool = True,
+                        finalize: bool = True) -> np.ndarray:
         """
         Create the final mix from stem conversation specification.
 
@@ -1232,6 +1233,13 @@ class StemOrchestrator:
             mixed[:samples] += contribution_a + contribution_b
         
         
+        # finalize=False: return the stem mix exactly as the curves define it. The live
+        # engine (club_mixer) loudness-matches whole tracks and limits the overlap itself;
+        # the ducking / -1.4 dB tail / peak-normalise / tanh stages below would put a
+        # level step (and saturation) between the transition and the songs around it.
+        if not finalize:
+            return mixed
+
         # --- 3. Tame distortion/harshness: reduce crossfade gain where loud transients overlap ---
         try:
             from scipy import signal as sig

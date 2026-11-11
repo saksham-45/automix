@@ -1,4 +1,6 @@
 # Base runtime — the stem-free club mixer + streaming server.
+# System binaries required on PATH: ffmpeg + ffprobe (uploads, decoding) and
+# yt-dlp (installed below; only used when ALLOW_YOUTUBE=true). Tests: requirements-dev.txt.
 # This is all that's needed to deploy the demo on a CPU box (no torch).
 flask==3.0.2
 librosa==0.10.1

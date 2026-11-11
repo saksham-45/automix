@@ -75,7 +75,7 @@ class CrossfadeEngine:
         fade_in = np.sqrt(0.5 * (1 - np.cos(np.pi * t)))
         
         # Apply extra smoothing with Gaussian filter for ultra-smooth curves
-        from scipy.ndimage import gaussian_filter1d
+        from src.curve_smooth import gaussian_filter1d
         sigma = min(400, max(100, n_samples / 30))  # Reasonable smoothing
         fade_out = gaussian_filter1d(fade_out, sigma=sigma)
         fade_in = gaussian_filter1d(fade_in, sigma=sigma)
@@ -152,7 +152,7 @@ class CrossfadeEngine:
             t = np.linspace(0, 1, fade_a_samples)
             curve_a[a_fade_start:switch_sample] = 0.5 * (1 + np.cos(np.pi * t))
         # Minimal smoothing for drums only (avoid extending overlap)
-        from scipy.ndimage import gaussian_filter1d
+        from src.curve_smooth import gaussian_filter1d
         curve_a = gaussian_filter1d(np.clip(curve_a, 0, 1), sigma=min(20, max(1, fade_a_samples // 10)))
         curve_a = np.clip(curve_a, 0, 1)
         
@@ -253,7 +253,7 @@ class CrossfadeEngine:
             fade_curve[drop_start_idx:] = sudden_drop
         
         # Smooth transitions between phases
-        from scipy.ndimage import gaussian_filter1d
+        from src.curve_smooth import gaussian_filter1d
         fade_curve = gaussian_filter1d(fade_curve, sigma=max(10, n_samples / 200))
         
         return np.clip(fade_curve, 0.0, 1.0)
@@ -288,7 +288,7 @@ class CrossfadeEngine:
             # Moderately steep: cosine (0.5 * (1 + cos(pi*t))) goes 1 -> 0
             fade_curve[fade_start_sample:fade_complete_sample] = 0.5 * (1 + np.cos(np.pi * t))
         
-        from scipy.ndimage import gaussian_filter1d
+        from src.curve_smooth import gaussian_filter1d
         fade_curve = gaussian_filter1d(fade_curve, sigma=max(5, n_samples / 400))
         return np.clip(fade_curve, 0.0, 1.0)
     
@@ -323,7 +323,7 @@ class CrossfadeEngine:
             # Cosine rise: 0.5 * (1 - cos(pi*t)) goes 0 -> 1
             fade_curve[fade_start_sample:fade_end_sample] = 0.5 * (1 - np.cos(np.pi * t))
         
-        from scipy.ndimage import gaussian_filter1d
+        from src.curve_smooth import gaussian_filter1d
         fade_curve = gaussian_filter1d(fade_curve, sigma=max(5, n_samples / 400))
         return np.clip(fade_curve, 0.0, 1.0)
     
@@ -395,7 +395,7 @@ class CrossfadeEngine:
                 curve[start_idx:end_idx] = w * start_value + (1 - w) * end_value
         
         # Smooth the entire curve
-        from scipy.ndimage import gaussian_filter1d
+        from src.curve_smooth import gaussian_filter1d
         curve = gaussian_filter1d(curve, sigma=max(5, n_samples / 300))
         
         return np.clip(curve, 0.0, 1.0)
@@ -470,7 +470,7 @@ class CrossfadeEngine:
         fade_in_adj = fade_in ** brightness_factor_b
         
         # Smooth the adjusted curves
-        from scipy.ndimage import gaussian_filter1d
+        from src.curve_smooth import gaussian_filter1d
         fade_out_adj = gaussian_filter1d(fade_out_adj, sigma=n_samples / 100)
         fade_in_adj = gaussian_filter1d(fade_in_adj, sigma=n_samples / 100)
         

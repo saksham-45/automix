@@ -13,7 +13,7 @@
 # ---------------------------------------------------------------------------
 FROM python:3.12-slim
 
-# System deps: ffmpeg (yt-dlp transcode), libsndfile (soundfile), git (demucs),
+# System deps: ffmpeg + ffprobe (upload sniffing/decoding, yt-dlp transcode), libsndfile (soundfile), git (demucs),
 # libgomp1 (OpenMP runtime that torch's CPU build needs to import).
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg libsndfile1 git libgomp1 \
@@ -39,6 +39,15 @@ RUN if [ "$INSTALL_STEMS" = "true" ]; then \
         pip install --no-cache-dir "numpy==1.26.4" ; \
     fi
 
+# Bake the htdemucs weights (~80 MB, 955717e8-8726e21a.th) into the image so the
+# first stems request doesn't stall on a download. TORCH_HOME is a fixed,
+# world-readable path used at build AND run time (the runtime user is not root).
+ENV TORCH_HOME=/opt/torch
+RUN if [ "$INSTALL_STEMS" = "true" ]; then \
+        python -c "from demucs.pretrained import get_model; get_model('htdemucs')" && \
+        chmod -R a+rX /opt/torch ; \
+    fi
+
 # --- App code + non-root runtime user (Hugging Face Spaces runs as uid 1000) -
 RUN useradd -m -u 1000 user
 COPY --chown=user:user . /app
@@ -47,6 +56,8 @@ COPY --chown=user:user . /app
 # demo step AND runtime writes (CACHE_DIR=/app/data/cache, chunk files) succeed.
 RUN mkdir -p /app/data && chown -R user:user /app
 USER user
+# Hosted demo: keep per-track audio short so a free CPU box stays within RAM/CPU.
+ENV PER_TRACK_CAP_SEC=150
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH \
     PORT=7860 \
@@ -58,4 +69,10 @@ ENV HOME=/home/user \
 RUN python src/demo_samples.py data/demo
 
 EXPOSE 7860
+# Liveness probe (slim image has no curl). /readyz is the readiness endpoint for
+# orchestrators that distinguish the two; it turns 503 while the render queue is full.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
+    CMD python -c "import os,urllib.request; urllib.request.urlopen('http://127.0.0.1:%s/healthz' % os.environ.get('PORT','7860'), timeout=4)" || exit 1
+# gunicorn gets SIGTERM; graceful_timeout (gunicorn.conf.py) must fit inside this.
+STOPSIGNAL SIGTERM
 ENTRYPOINT ["./docker-entrypoint.sh"]

@@ -4,17 +4,21 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>automix</title>
-<style>
+<link rel="icon" href="data:,"/>
+<style nonce="{{ csp_nonce }}">
   :root{
     --bg:#0b0b0c; --panel:#101012; --line:#1f1f23; --line2:#2b2b30;
     --ink:#ececE8; --mut:#76767c; --dim:#3a3a40;
     --accent:#c7a169;            /* the single accent — used only for the active deck & motion */
+    --bad:#d0786a;
   }
   *{box-sizing:border-box}
+  [hidden]{display:none !important}
   html{-webkit-font-smoothing:antialiased}
   body{margin:0; background:var(--bg); color:var(--ink); min-height:100vh;
     font:15px/1.6 ui-sans-serif,-apple-system,system-ui,"Segoe UI",Roboto,sans-serif}
   .mono{font-family:ui-monospace,"SF Mono",Menlo,monospace}
+  .ink{color:var(--ink)}
   .wrap{max-width:880px; margin:0 auto; padding:56px 22px 96px}
 
   header{margin-bottom:40px}
@@ -25,16 +29,16 @@
 
   /* ---------------- the deck ---------------- */
   .deck{border:1px solid var(--line); border-radius:4px; background:var(--panel); padding:30px 28px 26px; margin:34px 0 26px; position:relative}
-  .deckhead{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:30px}
-  .deckhead .l{font:500 10px/1 ui-monospace,monospace; letter-spacing:.28em; color:var(--mut); text-transform:uppercase}
-  #now{font:500 12px/1.4 ui-monospace,monospace; color:var(--mut); letter-spacing:.02em}
+  .deckhead{display:flex; justify-content:space-between; align-items:baseline; gap:16px; margin-bottom:30px}
+  .deckhead .l{font:500 10px/1 ui-monospace,monospace; letter-spacing:.28em; color:var(--mut); text-transform:uppercase; flex:none}
+  #now{font:500 12px/1.4 ui-monospace,monospace; color:var(--mut); letter-spacing:.02em; text-align:right; min-width:0; overflow-wrap:anywhere}
   #now .on{color:var(--ink)} #now .ac{color:var(--accent)}
 
   .row3{display:grid; grid-template-columns:1fr 92px 1fr; gap:22px; align-items:center; position:relative}
   /* one continuous tape line threading both decks through the crossfader */
   .row3::before{content:""; position:absolute; left:0; right:0; top:calc(50% + 14px); height:1px; background:var(--line2); z-index:0}
 
-  .cas{position:relative; z-index:1}
+  .cas{position:relative; z-index:1; min-width:0}
   .cas .top{display:flex; justify-content:space-between; align-items:baseline; margin-bottom:12px}
   .cas .dk{font:600 11px/1 ui-monospace,monospace; letter-spacing:.24em; color:var(--mut); text-transform:uppercase; transition:color .25s}
   .cas .nm{font:600 13px/1 ui-monospace,monospace; color:var(--dim); transition:color .25s}
@@ -71,33 +75,76 @@
   input[type=text]::placeholder{color:var(--dim)}
   input[type=text]:focus{outline:none; border-color:var(--mut)}
   .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap}
-  .opt{display:flex; align-items:center; gap:9px; color:var(--mut); font:500 12px/1 ui-monospace,monospace; margin-right:auto}
+  .opt{display:flex; align-items:center; gap:9px; flex-wrap:wrap; color:var(--mut); font:500 12px/1 ui-monospace,monospace; margin-right:auto}
   .opt input[type=range]{width:104px; accent-color:var(--accent)}
   .opt label.chk{display:inline-flex; align-items:center; gap:6px; text-transform:none; letter-spacing:0; margin:0; color:var(--mut)}
   .opt input[type=checkbox]{accent-color:var(--accent)}
   button{border:1px solid var(--line2); background:transparent; color:var(--ink); padding:11px 18px; border-radius:3px;
     font:600 12px/1 ui-monospace,monospace; letter-spacing:.04em; cursor:pointer; transition:border-color .15s,background .15s}
   button:hover{border-color:var(--mut)}
+  button:focus-visible,.drop:focus-within{outline:1px solid var(--accent); outline-offset:2px}
   .btn-go{background:var(--ink); color:var(--bg); border-color:var(--ink)}
   .btn-go:hover{background:#fff; border-color:#fff}
   button:disabled{opacity:.4; cursor:default}
-  #status{margin-top:18px; font:500 12px/1.4 ui-monospace,monospace; color:var(--mut)}
+  #status{margin-top:18px; font:500 12px/1.4 ui-monospace,monospace; color:var(--mut); overflow-wrap:anywhere}
+  #status.bad{color:var(--bad)}
+  .statusrow{display:flex; gap:12px; align-items:baseline; flex-wrap:wrap}
+  .statusrow button{padding:7px 12px; margin-top:14px}
+  .notes{list-style:none; margin:10px 0 0; padding:0; font:500 11px/1.5 ui-monospace,monospace; color:var(--mut)}
+  .notes li{overflow-wrap:anywhere}
+  .notes li b{font-weight:500; color:var(--bad)}
+
+  /* uploads */
+  .or{display:flex; align-items:center; gap:12px; margin:4px 0 18px; font:500 10px/1 ui-monospace,monospace; letter-spacing:.2em; color:var(--dim); text-transform:uppercase}
+  .or::before,.or::after{content:""; flex:1; height:1px; background:var(--line)}
+  .drop{display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; text-align:center;
+    border:1px dashed var(--line2); border-radius:3px; padding:22px 14px; cursor:pointer; margin:0;
+    text-transform:none; letter-spacing:0; font:500 13px/1.4 ui-monospace,monospace; color:var(--mut); transition:border-color .15s,background .15s}
+  .drop:hover,.drop.over{border-color:var(--accent); background:rgba(199,161,105,.04)}
+  .drop .ink{color:var(--ink)}
+  .drop small{font-size:11px; color:var(--dim)}
+  .vh{position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); border:0}
+  .ups{list-style:none; margin:10px 0 0; padding:0}
+  .ups li{display:grid; grid-template-columns:26px minmax(0,1fr) auto auto; gap:10px; align-items:center;
+    border-bottom:1px solid var(--line); padding:7px 0; font:500 12px/1.3 ui-monospace,monospace; color:var(--mut)}
+  .ups .n{color:var(--dim)}
+  .ups .nm{color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+  .ups .st.bad{color:var(--bad)} .ups .st.ok{color:var(--mut)}
+  .ups .ctl{display:flex; gap:4px}
+  .ups .ctl button{padding:5px 8px; font-size:11px; border-color:var(--line)}
 
   .out{border-top:1px solid var(--line); margin-top:26px; padding-top:22px; display:none}
   .pbar{height:1px; background:var(--line2); position:relative}
   .pbar>div{position:absolute; left:0; top:-1px; height:3px; background:var(--accent); width:0; transition:width .2s}
   .timeline{display:flex; height:22px; margin-top:18px; gap:1px}
-  .seg{display:flex; align-items:center; justify-content:center; font:600 10px/1 ui-monospace,monospace; overflow:hidden; white-space:nowrap; color:var(--mut)}
+  .seg{display:flex; align-items:center; justify-content:center; font:600 10px/1 ui-monospace,monospace; overflow:hidden; white-space:nowrap; color:var(--mut); min-width:0}
   .seg.track{background:var(--line)}
   .seg.transition{background:var(--accent); color:var(--bg)}
   .legend{color:var(--dim); font:500 11px/1 ui-monospace,monospace; margin-top:10px; letter-spacing:.02em}
+
+  @media (max-width:600px){
+    .wrap{padding:32px 16px 72px}
+    header{margin-bottom:24px}
+    .deck{padding:20px 14px 18px; margin:24px 0 22px}
+    .deckhead{flex-direction:column; align-items:flex-start; gap:8px; margin-bottom:20px}
+    #now{text-align:left}
+    .row3{grid-template-columns:minmax(0,1fr) 54px minmax(0,1fr); gap:10px}
+    .cas .dk{letter-spacing:.12em; font-size:10px}
+    .cas .nm{font-size:11px}
+    .vu{height:48px; gap:5px}
+    .opt{margin-right:0; width:100%}
+    .row button{flex:1 1 auto}
+    .ups li{grid-template-columns:22px minmax(0,1fr) auto; }
+    .ups .st{grid-column:2; grid-row:2}
+    .ups .ctl{grid-column:3; grid-row:1 / span 2}
+  }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <div class="logo"><i></i>automix<small>two-deck mixer</small></div>
-    <p class="lead">Two cassettes, one continuous take. Paste a playlist — or run the sample — and the crossfader hands the groove from deck A to deck B on every beat-matched transition.</p>
+    <p class="lead">Two cassettes, one continuous take. {% if allow_youtube %}Paste a playlist, {% endif %}{% if allow_uploads %}drop in your own tracks, {% endif %}or run the sample — and the crossfader hands the groove from deck A to deck B on every beat-matched transition.</p>
   </header>
 
   <!-- DECK -->
@@ -121,22 +168,40 @@
   </div>
 
   <!-- CONTROLS -->
+  {% if allow_youtube %}
   <div class="field">
-    <label>playlist or video url</label>
-    <input id="url" type="text" placeholder="https://www.youtube.com/playlist?list=…"/>
+    <label for="url">playlist or video url</label>
+    <input id="url" type="text" inputmode="url" autocomplete="off" placeholder="https://www.youtube.com/playlist?list=…"/>
   </div>
+  {% endif %}
+  {% if allow_uploads %}
+  {% if allow_youtube %}<div class="or">or your own files</div>{% endif %}
+  <div class="field">
+    <label class="drop" id="drop">
+      <input id="filepick" class="vh" type="file" multiple accept="audio/*,.mp3,.wav,.flac,.m4a,.aac,.ogg,.opus,.aiff,.aif,.webm"/>
+      <span><span class="ink">drop audio files</span> or choose files</span>
+      <small>mp3 · wav · flac · m4a · ogg — up to {{ max_upload_mb }} MB each, {{ max_tracks }} tracks, played in this order</small>
+    </label>
+    <ol class="ups" id="ups"></ol>
+  </div>
+  {% endif %}
   <div class="row">
     <div class="opt">
       <span>blend</span>
-      <input id="bars" type="range" min="8" max="32" step="8" value="16"/>
-      <span id="barsval" style="color:var(--ink)">16</span><span>bars</span>
-      <label class="chk" title="Separate stems with demucs for cleaner transitions. Slower on CPU."><input id="stems" type="checkbox"/> hq</label>
+      <input id="bars" type="range" min="8" max="32" step="8" value="16" aria-label="blend length in bars"/>
+      <span id="barsval" class="ink">16</span><span>bars</span>
+      <label class="chk" title="Separate drums / bass / vocals / melody (demucs) so the mixer can use the stem techniques: layered reveal, counter-melody, vocal overlay, bass from A + beat from B… {{ '' if stems_available else 'Not installed on this server.' }}"><input id="stems" type="checkbox" {{ 'checked' if stems_available else 'disabled' }}/> stems</label>
+      <label class="chk" title="Quick mix: each track plays a few bars after it is mixed in, then the next full-length transition starts — a short, transition-heavy DJ set. Songs are never cut mid-way."><input id="quick" type="checkbox"/> quick mix</label>
     </div>
     <button id="go" class="btn-go">Mix &amp; play</button>
     <button id="sample">Sample</button>
-    <button id="stop" style="display:none">Stop</button>
+    <button id="stop" hidden>Stop</button>
   </div>
-  <div id="status"></div>
+  <div class="statusrow">
+    <div id="status" role="status" aria-live="polite"></div>
+    <button id="retry" hidden>Retry</button>
+  </div>
+  <ul class="notes" id="skipped"></ul>
 
   <div class="out" id="player">
     <div class="pbar"><div id="fill"></div></div>
@@ -145,8 +210,10 @@
   </div>
 </div>
 
-<script>
+<script nonce="{{ csp_nonce }}">
 const $ = s => document.querySelector(s);
+const MAX_MB = {{ max_upload_mb|int }}, MAX_TRACKS = {{ max_tracks|int }};
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 $("#bars").oninput = e => $("#barsval").textContent = e.target.value;
 
 /* ---------- minimal cassette (line-art) ---------- */
@@ -189,26 +256,57 @@ function paintVU(el, level){
   for(let i=0;i<VU_N;i++) segs[i].style.background = i<lit ? (i>=VU_N-2?C_ACC:C_INK) : C_DIM;
 }
 
-/* ---------- streaming engine (logic unchanged) ---------- */
-let ctx, gain, analyser, td, sid, gen=0;
-let nextIdx=0, nextTime=0, t0=0, started=false, tlLen=0, statusInfo={};
+/* ---------- status / errors ---------- */
+function say(m, bad){ const el=$("#status"); el.textContent=m; el.classList.toggle("bad", !!bad); }
+function showSkipped(list){
+  const ul=$("#skipped"); ul.innerHTML="";
+  (list||[]).forEach(k=>{
+    const li=document.createElement("li"), b=document.createElement("b");
+    b.textContent="skipped"; li.appendChild(b);
+    li.appendChild(document.createTextNode(" "+k.source+" — "+k.reason));
+    ul.appendChild(li);
+  });
+}
+async function apiError(r){
+  let j={}; try{ j=await r.json(); }catch(_){}
+  if(j && j.error) return j.error;
+  if(r.status===429) return "too many requests — slow down a little";
+  if(r.status===503) return "the mixer is busy — try again in a minute";
+  return "server error ("+r.status+")";
+}
+
+/* ---------- streaming engine ---------- */
+let ctx, gain, analyser, td, sid=null, gen=0, lastBody=null;
+let nextIdx=0, nextTime=0, t0=0, started=false, tlLen=0, statusInfo={}, skippedLen=-1;
 const PREBUFFER=4, LOOKAHEAD=12;
 const scheduled=new Set();
 let raf=0, deckTrack=[null,null], angL=0, angR=0, lastT=0, smoothXF=0, smoothLvl=0;
 
-function fail(m){ $("#status").textContent="✗ "+m; resetButtons(); }
-function resetButtons(){ $("#go").disabled=$("#sample").disabled=false; $("#stop").style.display="none"; }
+function cancelServer(beacon){
+  if(!sid) return;
+  const id=sid; sid=null;
+  if(beacon && navigator.sendBeacon){ try{ if(navigator.sendBeacon(`/api/set/${id}/cancel`)) return; }catch(_){} }
+  fetch(`/api/set/${id}`,{method:"DELETE",keepalive:true}).catch(()=>{});
+}
+function fail(m){ cancelServer(false); stopAll(); say("✗ "+m, true); $("#now").textContent="idle";
+  resetButtons(); $("#retry").hidden=!lastBody; }
+function resetButtons(){ $("#go").disabled=$("#sample").disabled=false; $("#stop").hidden=true; }
 function stopAll(){ gen++; cancelAnimationFrame(raf); if(ctx){ try{ctx.close();}catch(_){} ctx=null; }
   paintVU($("#vuA"),0); paintVU($("#vuB"),0); $("#casA").classList.remove("active"); $("#casB").classList.remove("active"); }
-$("#stop").onclick=()=>{ stopAll(); $("#status").textContent="stopped"; $("#now").textContent="idle"; resetButtons(); };
+$("#stop").onclick=()=>{ cancelServer(false); stopAll(); say("stopped"); $("#now").textContent="idle"; resetButtons(); };
+$("#retry").onclick=()=>{ if(lastBody) start(lastBody); };
+window.addEventListener("pagehide", ()=>cancelServer(true));
 
 async function start(body){
+  cancelServer(false);
   stopAll();
   const myGen=++gen;
-  nextIdx=0; nextTime=0; t0=0; started=false; tlLen=0; statusInfo={}; scheduled.clear();
+  lastBody=body;
+  nextIdx=0; nextTime=0; t0=0; started=false; tlLen=0; statusInfo={}; skippedLen=-1; scheduled.clear();
   deckTrack=[null,null]; angL=0; angR=0; smoothXF=0; smoothLvl=0;
   $("#player").style.display="none"; $("#timeline").innerHTML=""; $("#now").textContent="cueing…";
-  $("#status").textContent="starting…"; $("#go").disabled=$("#sample").disabled=true; $("#stop").style.display="inline-block";
+  showSkipped([]); $("#retry").hidden=true;
+  say("starting…"); $("#go").disabled=$("#sample").disabled=true; $("#stop").hidden=false;
   ctx=new (window.AudioContext||window.webkitAudioContext)();
   gain=ctx.createGain(); gain.gain.value=1.0;
   analyser=ctx.createAnalyser(); analyser.fftSize=1024; td=new Uint8Array(analyser.fftSize);
@@ -216,21 +314,31 @@ async function start(body){
   lastT=performance.now(); animate(myGen);
   try{
     const r=await fetch("/api/set/start",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-    const j=await r.json(); if(j.error) throw new Error(j.error);
+    if(!r.ok) throw new Error(await apiError(r));
+    const j=await r.json();
+    if(myGen!==gen){ sid=j.session_id; cancelServer(false); return; }
     sid=j.session_id; loop(myGen);
-  }catch(e){ fail(e.message); }
+  }catch(e){ if(myGen===gen) fail(e.message==="Failed to fetch"?"could not reach the server":e.message); }
 }
 async function fetchDecode(i){
   const r=await fetch(`/api/set/${sid}/chunk/${i}`); if(r.status!==200) return null;
   try{ return await ctx.decodeAudioData(await r.arrayBuffer()); }catch(_){ return null; }
 }
+let netErrors=0;
 async function loop(myGen){
   if(myGen!==gen) return;
-  try{ statusInfo=await fetch("/api/set/"+sid).then(r=>r.json()); }catch(_){}
+  try{
+    const r=await fetch("/api/set/"+sid);
+    if(r.status===404) return fail("this set expired on the server — press retry");
+    if(!r.ok) throw new Error(await apiError(r));
+    statusInfo=await r.json(); netErrors=0;
+  }catch(e){ if(++netErrors>25) return fail("lost contact with the server"); }
   if(myGen!==gen) return;
   if(statusInfo.status==="error") return fail(statusInfo.error||"render failed");
+  const sk=statusInfo.skipped||[];
+  if(sk.length!==skippedLen){ showSkipped(sk); skippedLen=sk.length; }
   const ready=statusInfo.chunks_ready||0, total=statusInfo.chunk_count, chunkSec=statusInfo.chunk_sec||4;
-  if(!started && (ready>=PREBUFFER || (total!=null && ready>=total))){
+  if(!started && (ready>=PREBUFFER || (total!=null && ready>=total && total>0))){
     started=true; t0=ctx.currentTime+0.3; nextTime=t0; $("#player").style.display="block";
   }
   if(started){
@@ -248,23 +356,46 @@ async function loop(myGen){
     const elapsed=Math.max(0,ctx.currentTime-t0);
     const denom=(total!=null?total*chunkSec:Math.max(elapsed,(markers.length?markers[markers.length-1].end_sec:1)));
     $("#fill").style.width=Math.min(100,100*elapsed/Math.max(denom,1))+"%";
-    $("#status").textContent= statusInfo.status==="ready" ? `set ready — ${statusInfo.n_tracks} tracks` : "playing — rendering ahead";
+    say(statusInfo.status==="ready" ? `set ready — ${statusInfo.n_tracks} track${statusInfo.n_tracks===1?"":"s"}` : "playing — rendering ahead");
+  }else if(statusInfo.state==="queued"){
+    const p=statusInfo.queue_position;
+    say(p ? `queued — ${p===1?"next in line":"#"+p+" in line"} (other sets are rendering)` : "queued…");
   }else{
-    $("#status").textContent=(statusInfo.status||"working")+" — buffering "+ready+"/"+PREBUFFER;
+    say((statusInfo.status||"working")+" — buffering "+Math.min(ready,PREBUFFER)+"/"+PREBUFFER);
   }
   const finished=total!=null && nextIdx>=total;
-  if(finished){ $("#status").textContent="set complete"; resetButtons(); return; }
-  setTimeout(()=>loop(myGen),200);
+  if(finished){ say("set complete"); resetButtons(); return; }
+  // fast while rendering (to start early), relaxed while queued or fully rendered
+  setTimeout(()=>loop(myGen), (statusInfo.state==="queued"||statusInfo.state==="ready")?1000:200);
 }
 
 /* even tracks live on deck A, odd on deck B */
 function deckState(elapsed, markers){
   if(!markers.length) return {xf:smoothXF};
   const m=markers.find(m=>elapsed>=m.start_sec && elapsed<m.end_sec)||markers[markers.length-1];
-  if(m.type==="track"){ deckTrack[m.index%2]=m.index; return {xf:(m.index%2)===0?0:1, track:m.index, trans:false}; }
+  if(m.type==="track"){ deckTrack[m.index%2]=m.index; return {xf:(m.index%2)===0?0:1, track:m.index, trans:false, m}; }
   const frac=Math.min(1,Math.max(0,(elapsed-m.start_sec)/Math.max(.01,m.end_sec-m.start_sec)));
   deckTrack[m.from%2]=m.from; deckTrack[m.to%2]=m.to;
-  return {xf:(m.from%2)===0?frac:1-frac, from:m.from, to:m.to, trans:true, ttype:m.transition_type};
+  return {xf:(m.from%2)===0?frac:1-frac, from:m.from, to:m.to, trans:true, ttype:m.transition_type, m};
+}
+
+/* what the mixer decided for this transition, in DJ terms (labels come from the engine) */
+function transLabel(m){
+  const bits=[m.label||m.transition_type||"blend"];
+  if(m.bars) bits.push(m.bars+" bars");
+  if(m.bpm_from && m.bpm_to) bits.push(Math.round(m.bpm_from)+"→"+Math.round(m.bpm_to)+" bpm");
+  if(m.key_from && m.key_to && m.key_from!=="?" && m.key_to!=="?") bits.push(m.key_from+"→"+m.key_to);
+  return bits.join(" · ");
+}
+function transTitle(m){
+  return transLabel(m)+(m.description?" — "+m.description:"")+(m.stems?" [stems]":"")
+    +(m.library?" · "+m.library+" library":"")+(m.reason?" ("+m.reason+")":"");
+}
+function trackLabel(m){
+  const bits=[];
+  if(m.bpm) bits.push(Math.round(m.bpm)+" bpm");
+  if(m.key && m.key!=="?") bits.push(m.key);
+  return bits.join(" · ");
 }
 
 function animate(myGen){
@@ -296,10 +427,12 @@ function animate(myGen){
       const fd=(st.from%2)===0, tdk=(st.to%2)===0;
       const f=`<span class="ac">${fd?'A':'B'}·${("0"+(st.from+1)).slice(-2)}</span>`;
       const t=`<span class="ac">${tdk?'A':'B'}·${("0"+(st.to+1)).slice(-2)}</span>`;
-      $("#now").innerHTML=`${f} → ${t}  <span class="on">${st.ttype||"blend"}</span>`;
+      $("#now").innerHTML=`${f} → ${t}  <span class="on">${esc(transLabel(st.m))}</span>`;
+      $("#now").title=transTitle(st.m);
     }else{
       const d=(st.track%2===0)?'A':'B';
-      $("#now").innerHTML=`<span class="ac">deck ${d}</span> <span class="on">track ${("0"+(st.track+1)).slice(-2)}</span>`;
+      $("#now").innerHTML=`<span class="ac">deck ${d}</span> <span class="on">track ${("0"+(st.track+1)).slice(-2)}</span> ${esc(trackLabel(st.m))}`;
+      $("#now").title="";
     }
   }
   raf=requestAnimationFrame(()=>animate(myGen));
@@ -318,18 +451,79 @@ function buildTimeline(markers){
   markers.forEach(m=>{
     const d=document.createElement("div"); d.className="seg "+m.type;
     d.style.width=Math.max(0.5,(m.end_sec-m.start_sec)/dur*100)+"%";
-    d.title=m.type==="transition"?`transition (${m.transition_type})`:`track ${m.index+1}`;
+    d.title=m.type==="transition"?transTitle(m):`track ${m.index+1}${trackLabel(m)?" · "+trackLabel(m):""}`;
     d.textContent=m.type==="transition"?"":("T"+(m.index+1));
     tl.appendChild(d);
   });
 }
 
+/* ---------- uploads: ordered list, uploaded one at a time ---------- */
+const ups=[];                      // {key,name,state:'wait'|'up'|'ok'|'bad',id,dur,reason,file}
+let upKey=0, uploading=false;
+function fmtDur(s){ s=Math.round(s||0); return Math.floor(s/60)+":"+("0"+(s%60)).slice(-2); }
+function renderUps(){
+  const ol=$("#ups"); if(!ol) return; ol.innerHTML="";
+  ups.forEach((u,i)=>{
+    const li=document.createElement("li");
+    const n=document.createElement("span"); n.className="n"; n.textContent=("0"+(i+1)).slice(-2);
+    const nm=document.createElement("span"); nm.className="nm"; nm.textContent=u.name; nm.title=u.name;
+    const st=document.createElement("span"); st.className="st"+(u.state==="bad"?" bad":" ok");
+    st.textContent= u.state==="ok"?fmtDur(u.dur) : u.state==="bad"?u.reason : u.state==="up"?"uploading…":"waiting…";
+    const ctl=document.createElement("span"); ctl.className="ctl";
+    const mk=(txt,label,fn,dis)=>{ const b=document.createElement("button"); b.type="button"; b.textContent=txt;
+      b.setAttribute("aria-label",label); b.disabled=!!dis; b.onclick=fn; ctl.appendChild(b); };
+    mk("↑","move "+u.name+" up",()=>{ ups.splice(i-1,0,ups.splice(i,1)[0]); renderUps(); }, i===0);
+    mk("↓","move "+u.name+" down",()=>{ ups.splice(i+1,0,ups.splice(i,1)[0]); renderUps(); }, i===ups.length-1);
+    mk("×","remove "+u.name,()=>{ ups.splice(i,1); u.removed=true;
+      if(u.id) fetch(`/api/upload/${u.id}`,{method:"DELETE"}).catch(()=>{}); renderUps(); });
+    li.append(n,nm,st,ctl); ol.appendChild(li);
+  });
+}
+function addFiles(list){
+  for(const f of list){
+    if(ups.length>=MAX_TRACKS){ say(`at most ${MAX_TRACKS} tracks per set`, true); break; }
+    const u={key:++upKey, name:f.name, state:"wait", file:f};
+    if(f.size>MAX_MB*1024*1024){ u.state="bad"; u.reason=`larger than ${MAX_MB} MB`; }
+    ups.push(u);
+  }
+  renderUps(); pump();
+}
+async function pump(){
+  if(uploading) return;
+  const u=ups.find(x=>x.state==="wait"); if(!u) return;
+  uploading=true; u.state="up"; renderUps();
+  try{
+    const fd=new FormData(); fd.append("file", u.file, u.name);
+    const r=await fetch("/api/upload",{method:"POST",body:fd});
+    let j={}; try{ j=await r.json(); }catch(_){}
+    if(r.ok && j.uploads && j.uploads.length){ u.state="ok"; u.id=j.uploads[0].id; u.dur=j.uploads[0].duration; }
+    else { u.state="bad"; u.reason=(j.rejected&&j.rejected[0]&&j.rejected[0].reason)||j.error||(r.status===413?`larger than ${MAX_MB} MB`:"upload failed ("+r.status+")"); }
+    if(u.removed && u.id) fetch(`/api/upload/${u.id}`,{method:"DELETE"}).catch(()=>{});
+  }catch(_){ u.state="bad"; u.reason="upload failed (network)"; }
+  u.file=null; uploading=false; renderUps(); pump();
+}
+const drop=$("#drop");
+if(drop){
+  $("#filepick").onchange=e=>{ addFiles(e.target.files); e.target.value=""; };
+  ["dragenter","dragover"].forEach(ev=>drop.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{ e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop",e=>{ if(e.dataTransfer&&e.dataTransfer.files) addFiles(e.dataTransfer.files); });
+  // a file dropped next to the zone must not navigate away from a playing set
+  window.addEventListener("dragover",e=>e.preventDefault()); window.addEventListener("drop",e=>e.preventDefault());
+}
+
+function opts(){ return {blend_bars:+$("#bars").value, use_stems:$("#stems").checked, quick:$("#quick").checked}; }
 $("#go").onclick=()=>{
-  const url=$("#url").value.trim();
-  if(!url){ $("#status").textContent="enter a url, or run the sample"; return; }
-  start({url, blend_bars:+$("#bars").value, use_stems:$("#stems").checked});
+  const url=$("#url")?$("#url").value.trim():"";
+  const ready=ups.filter(u=>u.state==="ok").map(u=>u.id);
+  const pending=ups.some(u=>u.state==="wait"||u.state==="up");
+  if(url && ups.length){ say("use either a playlist url or your uploaded files — clear one", true); return; }
+  if(url) return start({url, ...opts()});
+  if(pending){ say("wait for the uploads to finish", true); return; }
+  if(ready.length) return start({uploads:ready, ...opts()});
+  say($("#url")&&drop?"enter a url, add files, or run the sample":$("#url")?"enter a url, or run the sample":drop?"add files, or run the sample":"run the sample", true);
 };
-$("#sample").onclick=()=>start({files:["__SAMPLE__"], blend_bars:+$("#bars").value, use_stems:$("#stems").checked});
+$("#sample").onclick=()=>start({files:["__SAMPLE__"], ...opts()});
 </script>
 </body>
 </html>
