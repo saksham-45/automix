@@ -31,7 +31,7 @@ live crossfader.
   <img src="docs/media/preview_liquid_metal.gif" width="49%" alt="Liquid Metal during an acapella overlay">
 </p>
 
-**▶ Full videos and mixes are on the [Showcase release](https://github.com/saksham-45/automix-_./releases/tag/showcase-2026-11).**
+**▶ Full videos and mixes are on the [Showcase release](https://github.com/saksham-45/automix/releases/tag/showcase-2026-11).**
 
 | | what | length |
 |---|---|---|
